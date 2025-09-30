@@ -3,60 +3,16 @@
 import type React from "react"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Button } from "@/components/ui/button"
-import { Moon, Sun, ArrowLeft, Settings } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { ThemeToggle } from "@/components/game/ThemeToggle"
+import { GameHeader } from "@/components/game/GameHeader"
+import { MainScreen } from "@/components/game/MainScreen"
+import { ColorZones } from "@/components/game/ColorZones"
+import { BubbleItem } from "@/components/game/BubbleItem"
+import { PauseModal } from "@/components/game/PauseModal"
+import { GAME_CONFIG } from "@/components/game/config"
+import type { Bubble, ColorZone, GameMode, BubbleColor } from "@/components/game/types"
 
-type BubbleColor = string // Changed to string for unique random colors
-
-// Centralized game configuration for easy tuning
-const GAME_CONFIG = {
-  spawn: {
-    batchSize: 4, // số lượng bóng sinh ra mỗi lần
-    baseIntervalMs: 2000, // khoảng thời gian cơ sở giữa các lần spawn
-    intervalDecreasePerDifficulty: 200, // giảm theo độ khó
-    minIntervalMs: 1000, // khoảng thời gian tối thiểu
-    initialBubblesOnMain: 15, // số bóng ban đầu ở màn chính
-  },
-  movement: {
-    frameIntervalMs: 16, // ms mỗi frame
-    verticalSpeedMultiplier: 0.35, // hệ số tốc độ dọc mỗi frame
-    horizontalDriftMultiplier: 0.005, // hệ số trôi ngang mỗi frame
-  },
-  bubble: {
-    minSize: 30,
-    maxSize: 90,
-    baseSpeedMin: 3,
-    baseSpeedMax: 5,
-    driftRange: 100,
-  },
-  zone: {
-    width: 100,
-    height: 100,
-    verticalGap: 20,
-    yPadding: 50,
-  },
-} as const
-
-interface Bubble {
-  id: number
-  x: number
-  y: number
-  size: number
-  color: BubbleColor
-  speed: number
-  drift: number
-}
-
-interface ColorZone {
-  id: number
-  color: BubbleColor
-  side: "left" | "right"
-  y: number
-  bubbleId: number // Track which bubble this zone belongs to
-}
-
-type GameMode = "click" | "move" | null
+// types moved to shared module
 
 const generateRandomColor = (existingColors: string[]): string => {
   let color: string
@@ -358,138 +314,53 @@ export default function BubbleGame() {
       const initialBubbles = Array.from({ length: GAME_CONFIG.spawn.initialBubblesOnMain }, () => generateBubble())
       setBubbles(initialBubbles)
     }
-  }, [])
+  }, [bubbles.length, generateBubble])
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gradient-to-br from-background via-accent/20 to-secondary/30">
       {/* Theme toggle */}
-      <button
-        onClick={toggleTheme}
-        className="absolute top-4 right-4 z-50 p-3 rounded-full bg-card/80 backdrop-blur-sm shadow-lg hover:scale-110 transition-transform"
-      >
-        {isDark ? <Sun className="w-6 h-6 text-yellow-400" /> : <Moon className="w-6 h-6 text-primary" />}
-      </button>
+      <ThemeToggle isDark={isDark} onToggle={toggleTheme} />
 
       {/* Game UI */}
       {gameMode && (
-        <>
-          {/* Back button */}
-          <button
-            onClick={backToMain}
-            className="absolute top-4 left-4 z-50 p-3 rounded-full bg-card/80 backdrop-blur-sm shadow-lg hover:scale-110 transition-transform"
-          >
-            <ArrowLeft className="w-6 h-6 text-foreground" />
-          </button>
-
-          {/* Score */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full bg-card/90 backdrop-blur-sm shadow-lg">
-            <p className="text-2xl font-bold text-foreground">{score}</p>
-          </div>
-
-          {/* Settings button */}
-          <button
-            onClick={() => setIsPaused(!isPaused)}
-            className="absolute top-4 right-20 z-50 p-3 rounded-full bg-card/80 backdrop-blur-sm shadow-lg hover:scale-110 transition-transform"
-          >
-            <Settings className="w-6 h-6 text-foreground" />
-          </button>
-        </>
+        <GameHeader
+          score={score}
+          onBack={backToMain}
+          onTogglePause={() => setIsPaused(!isPaused)}
+        />
       )}
 
       {/* Main screen */}
       {!gameMode && (
-        <div className="absolute inset-0 flex items-center justify-center z-40 bg-background/40 backdrop-blur-sm">
-          <div className="text-center">
-            <h1
-              className="text-8xl font-bold text-primary start-text cursor-pointer select-none mb-8"
-              onClick={() => setShowModeSelect(true)}
-            >
-              START
-            </h1>
-
-            {showModeSelect && (
-              <div className="flex gap-6 justify-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <Button
-                  size="lg"
-                  onClick={() => startGame("click")}
-                  className="text-2xl px-12 py-8 rounded-2xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-2xl hover:scale-105 transition-transform"
-                >
-                  Click
-                </Button>
-                <Button
-                  size="lg"
-                  onClick={() => startGame("move")}
-                  className="text-2xl px-12 py-8 rounded-2xl bg-secondary hover:bg-secondary/90 text-secondary-foreground shadow-2xl hover:scale-105 transition-transform"
-                >
-                  Move
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
+        <MainScreen
+          showModeSelect={showModeSelect}
+          onOpenModes={() => setShowModeSelect(true)}
+          onStart={(mode) => startGame(mode)}
+        />
       )}
 
-      {gameMode === "move" &&
-        colorZones.map((zone) => (
-          <div
-            key={zone.id}
-            className="absolute z-10 pointer-events-none"
-            style={{
-              left: zone.side === "left" ? "0" : "auto",
-              right: zone.side === "right" ? "0" : "auto",
-              top: `${zone.y}px`,
-              width: `${GAME_CONFIG.zone.width}px`,
-              height: `${GAME_CONFIG.zone.height}px`,
-              background:
-                zone.side === "left"
-                  ? `linear-gradient(to right, ${zone.color}, transparent)`
-                  : `linear-gradient(to left, ${zone.color}, transparent)`,
-              borderRadius: zone.side === "left" ? "0 50px 50px 0" : "50px 0 0 50px",
-            }}
-          />
-        ))}
+      {gameMode === "move" && <ColorZones zones={colorZones} />}
 
       {/* Bubbles */}
       {bubbles.map((bubble) => (
-        <div
+        <BubbleItem
           key={bubble.id}
-          className={`absolute rounded-full shadow-2xl cursor-pointer transition-transform hover:scale-110 ${draggedBubble === bubble.id ? "z-50 scale-110" : "z-20"
-            }`}
-          style={{
-            width: `${bubble.size}px`,
-            height: `${bubble.size}px`,
-            left: `${bubble.x}px`,
-            top: `${bubble.y}px`,
-            backgroundColor: bubble.color,
-            boxShadow:
-              "0 8px 32px rgba(0, 0, 0, 0.2), inset 0 -8px 16px rgba(0, 0, 0, 0.1), inset 0 8px 16px rgba(255, 255, 255, 0.3)",
-          }}
-          onClick={() => handleBubbleClick(bubble.id)}
+          bubble={bubble}
+          isDragged={draggedBubble === bubble.id}
+          onClick={handleBubbleClick}
           onMouseDown={(e) => handleDragStart(e, bubble.id)}
           onTouchStart={(e) => handleDragStart(e, bubble.id)}
         />
       ))}
 
       {/* Pause modal */}
-      <Dialog open={isPaused} onOpenChange={setIsPaused}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-2xl text-center">Game tạm dừng</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4 py-4">
-            <div className="text-center">
-              <p className="text-4xl font-bold text-primary mb-2">{score}</p>
-              <p className="text-muted-foreground">Điểm hiện tại</p>
-            </div>
-            <Button onClick={() => setIsPaused(false)} size="lg" className="w-full">
-              Tiếp tục
-            </Button>
-            <Button onClick={backToMain} variant="outline" size="lg" className="w-full bg-transparent">
-              Về màn hình chính
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PauseModal
+        open={isPaused}
+        score={score}
+        onOpenChange={setIsPaused}
+        onResume={() => setIsPaused(false)}
+        onBackToMain={backToMain}
+      />
     </div>
   )
 }
