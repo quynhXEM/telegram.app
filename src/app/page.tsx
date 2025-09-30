@@ -9,6 +9,35 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 
 type BubbleColor = string // Changed to string for unique random colors
 
+// Centralized game configuration for easy tuning
+const GAME_CONFIG = {
+  spawn: {
+    batchSize: 4, // số lượng bóng sinh ra mỗi lần
+    baseIntervalMs: 2000, // khoảng thời gian cơ sở giữa các lần spawn
+    intervalDecreasePerDifficulty: 200, // giảm theo độ khó
+    minIntervalMs: 1000, // khoảng thời gian tối thiểu
+    initialBubblesOnMain: 15, // số bóng ban đầu ở màn chính
+  },
+  movement: {
+    frameIntervalMs: 16, // ms mỗi frame
+    verticalSpeedMultiplier: 0.35, // hệ số tốc độ dọc mỗi frame
+    horizontalDriftMultiplier: 0.005, // hệ số trôi ngang mỗi frame
+  },
+  bubble: {
+    minSize: 30,
+    maxSize: 90,
+    baseSpeedMin: 3,
+    baseSpeedMax: 5,
+    driftRange: 100,
+  },
+  zone: {
+    width: 100,
+    height: 100,
+    verticalGap: 20,
+    yPadding: 50,
+  },
+} as const
+
 interface Bubble {
   id: number
   x: number
@@ -72,11 +101,13 @@ export default function BubbleGame() {
 
   // Generate random bubble
   const generateBubble = useCallback((): Bubble => {
-    const size = Math.random() * 60 + 30 // 30-90px
-    const existingColors = bubbles.map((b) => b.color)
-    const color = generateRandomColor(existingColors)
-    const speed = (Math.random() * 2 + 3) * difficulty // Speed increases with difficulty
-    const drift = (Math.random() - 0.5) * 100 // Random horizontal drift
+    const size = Math.random() * (GAME_CONFIG.bubble.maxSize - GAME_CONFIG.bubble.minSize) + GAME_CONFIG.bubble.minSize
+    // Không phụ thuộc vào danh sách bubbles để tránh reset interval spawn
+    const color = generateRandomColor([])
+    const baseSpeedRange = GAME_CONFIG.bubble.baseSpeedMax - GAME_CONFIG.bubble.baseSpeedMin
+    const baseSpeed = Math.random() * baseSpeedRange + GAME_CONFIG.bubble.baseSpeedMin
+    const speed = baseSpeed * difficulty // Speed increases with difficulty
+    const drift = (Math.random() - 0.5) * GAME_CONFIG.bubble.driftRange // Random horizontal drift
 
     return {
       id: bubbleIdCounter.current++,
@@ -87,20 +118,22 @@ export default function BubbleGame() {
       speed,
       drift,
     }
-  }, [difficulty, bubbles])
+  }, [difficulty])
 
   const generateColorZone = useCallback(
     (color: BubbleColor, bubbleId: number): ColorZone => {
       const side = Math.random() > 0.5 ? "left" : "right"
-      const zoneHeight = 100 // Height of each zone segment
+      const zoneHeight = GAME_CONFIG.zone.height
+      const yPadding = GAME_CONFIG.zone.yPadding
+      const verticalGap = GAME_CONFIG.zone.verticalGap
 
       // Find non-overlapping position
       let y: number
       let attempts = 0
       do {
-        y = Math.random() * (window.innerHeight - zoneHeight - 100) + 50
+        y = Math.random() * (window.innerHeight - zoneHeight - yPadding * 2) + yPadding
         const overlaps = colorZones.some(
-          (zone) => zone.side === side && Math.abs(zone.y - y) < zoneHeight + 20, // 20px gap between zones
+          (zone) => zone.side === side && Math.abs(zone.y - y) < zoneHeight + verticalGap,
         )
         if (!overlaps) break
         attempts++
@@ -203,13 +236,13 @@ export default function BubbleGame() {
 
     // Check if bubble is in a matching color zone
     const matchingZone = colorZones.find((zone) => {
-      const zoneX = zone.side === "left" ? 0 : window.innerWidth - 100
-      const zoneWidth = 100
+      const zoneX = zone.side === "left" ? 0 : window.innerWidth - GAME_CONFIG.zone.width
+      const zoneWidth = GAME_CONFIG.zone.width
       const isInZone =
         bubble.x >= zoneX - 40 &&
         bubble.x <= zoneX + zoneWidth + 40 &&
         bubble.y >= zone.y - 40 &&
-        bubble.y <= zone.y + 140 &&
+        bubble.y <= zone.y + GAME_CONFIG.zone.height + 40 &&
         zone.color === bubble.color
       return isInZone
     })
@@ -225,17 +258,23 @@ export default function BubbleGame() {
   }, [draggedBubble, bubbles, colorZones])
 
   useEffect(() => {
-    const spawnRate = Math.max(2500 - difficulty * 150, 1000) // Moderate spawning, min 1000ms
+    const spawnRate = Math.max(
+      GAME_CONFIG.spawn.baseIntervalMs - difficulty * GAME_CONFIG.spawn.intervalDecreasePerDifficulty,
+      GAME_CONFIG.spawn.minIntervalMs,
+    )
 
     const interval = setInterval(() => {
       if (isPaused) return
 
-      const newBubble = generateBubble()
-      setBubbles((prev) => [...prev, newBubble])
+      const batch: Bubble[] = []
+      for (let i = 0; i < GAME_CONFIG.spawn.batchSize; i++) {
+        batch.push(generateBubble())
+      }
+      setBubbles((prev) => [...prev, ...batch])
 
       // Add color zone for move mode
       if (gameMode === "move") {
-        setColorZones((prev) => [...prev, generateColorZone(newBubble.color, newBubble.id)])
+        setColorZones((prev) => [...prev, ...batch.map((b) => generateColorZone(b.color, b.id))])
       }
     }, spawnRate)
 
@@ -267,8 +306,9 @@ export default function BubbleGame() {
 
             return {
               ...bubble,
-              y: bubble.y - bubble.speed,
-              x: bubble.x + bubble.drift * 0.01,
+              // Quãng đường di chuyển mỗi frame theo cấu hình
+              y: bubble.y - bubble.speed * GAME_CONFIG.movement.verticalSpeedMultiplier,
+              x: bubble.x + bubble.drift * GAME_CONFIG.movement.horizontalDriftMultiplier,
             }
           })
 
@@ -278,7 +318,7 @@ export default function BubbleGame() {
 
         return updatedBubbles
       })
-    }, 50)
+    }, GAME_CONFIG.movement.frameIntervalMs)
 
     return () => clearInterval(interval)
   }, [isPaused, draggedBubble, gameMode])
@@ -315,7 +355,7 @@ export default function BubbleGame() {
 
   useEffect(() => {
     if (bubbles.length === 0) {
-      const initialBubbles = Array.from({ length: 3 }, () => generateBubble())
+      const initialBubbles = Array.from({ length: GAME_CONFIG.spawn.initialBubblesOnMain }, () => generateBubble())
       setBubbles(initialBubbles)
     }
   }, [])
@@ -393,11 +433,13 @@ export default function BubbleGame() {
         colorZones.map((zone) => (
           <div
             key={zone.id}
-            className="absolute w-[100px] h-[100px] z-10 pointer-events-none"
+            className="absolute z-10 pointer-events-none"
             style={{
               left: zone.side === "left" ? "0" : "auto",
               right: zone.side === "right" ? "0" : "auto",
               top: `${zone.y}px`,
+              width: `${GAME_CONFIG.zone.width}px`,
+              height: `${GAME_CONFIG.zone.height}px`,
               background:
                 zone.side === "left"
                   ? `linear-gradient(to right, ${zone.color}, transparent)`
@@ -411,9 +453,8 @@ export default function BubbleGame() {
       {bubbles.map((bubble) => (
         <div
           key={bubble.id}
-          className={`absolute rounded-full shadow-2xl cursor-pointer transition-transform hover:scale-110 ${
-            draggedBubble === bubble.id ? "z-50 scale-110" : "z-20"
-          }`}
+          className={`absolute rounded-full shadow-2xl cursor-pointer transition-transform hover:scale-110 ${draggedBubble === bubble.id ? "z-50 scale-110" : "z-20"
+            }`}
           style={{
             width: `${bubble.size}px`,
             height: `${bubble.size}px`,
