@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { ThemeToggle } from "@/components/game/ThemeToggle"
 import { GameHeader } from "@/components/game/GameHeader"
 import { MainScreen } from "@/components/game/MainScreen"
@@ -136,7 +136,7 @@ export default function BubbleGame() {
   }
 
   // Handle bubble click (Click mode)
-  const handleBubbleClick = (bubbleId: number) => {
+  const handleBubbleClick = useCallback((bubbleId: number) => {
     if (gameMode !== "click" || isPaused) return
 
     const bubble = bubbles.find((b) => b.id === bubbleId)
@@ -147,14 +147,14 @@ export default function BubbleGame() {
 
     // Remove bubble with pop animation
     setBubbles((prev) => prev.filter((b) => b.id !== bubbleId))
-  }
+  }, [gameMode, isPaused, bubbles])
 
   // Handle drag start (Move mode)
-  const handleDragStart = (e: React.MouseEvent | React.TouchEvent, bubbleId: number) => {
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent, bubbleId: number) => {
     if (gameMode !== "move" || isPaused) return
     e.preventDefault()
     setDraggedBubble(bubbleId)
-  }
+  }, [gameMode, isPaused])
 
   // Handle drag move
   const handleDragMove = useCallback(
@@ -237,46 +237,62 @@ export default function BubbleGame() {
     return () => clearInterval(interval)
   }, [generateBubble, generateColorZone, gameMode, isPaused, difficulty])
 
-  // Animate bubbles
+  // Animate bubbles using requestAnimationFrame for better performance
   useEffect(() => {
     if (isPaused) return
 
-    const interval = setInterval(() => {
-      setBubbles((prev) => {
-        const removedBubbleIds: number[] = []
+    let animationId: number
+    let lastTime = 0
+    const targetFPS = 60
+    const frameInterval = 1000 / targetFPS
 
-        const updatedBubbles = prev
-          .filter((bubble) => {
-            // Don't move dragged bubble
-            if (bubble.id === draggedBubble) return true
+    const animate = (currentTime: number) => {
+      if (currentTime - lastTime >= frameInterval) {
+        setBubbles((prev) => {
+          const removedBubbleIds: number[] = []
 
-            // Remove bubbles that went off screen
-            const shouldRemove = bubble.y < -bubble.size
-            if (shouldRemove) {
-              removedBubbleIds.push(bubble.id)
-            }
-            return !shouldRemove
-          })
-          .map((bubble) => {
-            if (bubble.id === draggedBubble) return bubble
+          const updatedBubbles = prev
+            .filter((bubble) => {
+              // Don't move dragged bubble
+              if (bubble.id === draggedBubble) return true
 
-            return {
-              ...bubble,
-              // Quãng đường di chuyển mỗi frame theo cấu hình
-              y: bubble.y - bubble.speed * GAME_CONFIG.movement.verticalSpeedMultiplier,
-              x: bubble.x + bubble.drift * GAME_CONFIG.movement.horizontalDriftMultiplier,
-            }
-          })
+              // Remove bubbles that went off screen
+              const shouldRemove = bubble.y < -bubble.size
+              if (shouldRemove) {
+                removedBubbleIds.push(bubble.id)
+              }
+              return !shouldRemove
+            })
+            .map((bubble) => {
+              if (bubble.id === draggedBubble) return bubble
 
-        if (removedBubbleIds.length > 0 && gameMode === "move") {
-          setColorZones((prevZones) => prevZones.filter((zone) => !removedBubbleIds.includes(zone.bubbleId)))
-        }
+              return {
+                ...bubble,
+                // Quãng đường di chuyển mỗi frame theo cấu hình
+                y: bubble.y - bubble.speed * GAME_CONFIG.movement.verticalSpeedMultiplier,
+                x: bubble.x + bubble.drift * GAME_CONFIG.movement.horizontalDriftMultiplier,
+              }
+            })
 
-        return updatedBubbles
-      })
-    }, GAME_CONFIG.movement.frameIntervalMs)
+          if (removedBubbleIds.length > 0 && gameMode === "move") {
+            setColorZones((prevZones) => prevZones.filter((zone) => !removedBubbleIds.includes(zone.bubbleId)))
+          }
 
-    return () => clearInterval(interval)
+          return updatedBubbles
+        })
+        lastTime = currentTime
+      }
+
+      animationId = requestAnimationFrame(animate)
+    }
+
+    animationId = requestAnimationFrame(animate)
+
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId)
+      }
+    }
   }, [isPaused, draggedBubble, gameMode])
 
   // Increase difficulty over time
@@ -308,6 +324,29 @@ export default function BubbleGame() {
       window.removeEventListener("touchend", handleDragEnd)
     }
   }, [gameMode, handleDragMove, handleDragEnd])
+
+  // Tự động pause khi mất focus
+  useEffect(() => {
+    const handleBlur = () => {
+      if (gameMode && !isPaused) {
+        setIsPaused(true)
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && gameMode && !isPaused) {
+        setIsPaused(true)
+      }
+    }
+
+    window.addEventListener('blur', handleBlur)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('blur', handleBlur)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [gameMode, isPaused])
 
   useEffect(() => {
     if (bubbles.length === 0) {
@@ -342,16 +381,19 @@ export default function BubbleGame() {
       {gameMode === "move" && <ColorZones zones={colorZones} />}
 
       {/* Bubbles */}
-      {bubbles.map((bubble) => (
-        <BubbleItem
-          key={bubble.id}
-          bubble={bubble}
-          isDragged={draggedBubble === bubble.id}
-          onClick={handleBubbleClick}
-          onMouseDown={(e) => handleDragStart(e, bubble.id)}
-          onTouchStart={(e) => handleDragStart(e, bubble.id)}
-        />
-      ))}
+      {bubbles.map((bubble) => {
+        const isDragged = draggedBubble === bubble.id
+        return (
+          <BubbleItem
+            key={bubble.id}
+            bubble={bubble}
+            isDragged={isDragged}
+            onClick={handleBubbleClick}
+            onMouseDown={(e) => handleDragStart(e, bubble.id)}
+            onTouchStart={(e) => handleDragStart(e, bubble.id)}
+          />
+        )
+      })}
 
       {/* Pause modal */}
       <PauseModal
